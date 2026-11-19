@@ -1,0 +1,115 @@
+---
+title:
+---
+
+# Using VIIRS Nightime Light (NTL) to Visualize the Impact of Winter Storms
+## Feburary 2021 Power Outages in Texas 
+
+```{r}
+# Import libraries
+library(here)
+library(terra) # raster handling
+library(tidyverse)
+library(tmap) # map making
+library(kableExtra) # table formatting
+library(spData) # spatial data
+library(spDataLarge) # spatial data
+library(geodata) # spatial data
+library(stars)
+```
+
+### Read in rasters for Feb 07 and Feb 16
+```{r}
+feb_07_1 <- rast("data/VNP46A1/VNP46A1.A2021038.h08v05.001.2021039064328.tif")
+feb_07_2 <- rast("data/VNP46A1/VNP46A1.A2021038.h08v06.001.2021039064329.tif")
+feb_07 <- merge(feb_07_1, feb_07_2)
+
+feb_16_1 <- rast("data/VNP46A1/VNP46A1.A2021047.h08v05.001.2021048091106.tif")
+feb_16_2 <- rast("data/VNP46A1/VNP46A1.A2021047.h08v06.001.2021048091105.tif")
+feb_16 <- merge(feb_16_1, feb_16_2)
+
+viirs <- merge(feb_07, feb_16)
+```
+
+### Read in buildings and roads datasets
+```{r}
+# Read in .gpkg's
+buildings <- st_read('data/gis_osm_buildings_a_free_1.gpkg', query = "SELECT *
+FROM gis_osm_buildings_a_free_1
+WHERE (type IS NULL AND name IS NULL)
+OR type in ('residential', 'apartments', 'house', 'static_caravan', 'detached')")
+
+roads <- st_read('data/gis_osm_roads_free_1.gpkg', query = "SELECT * FROM gis_osm_roads_free_1 WHERE fclass='motorway'")
+```
+
+### Check CRS's!
+```{r}
+if((st_crs(crs(viirs)) == st_crs(crs(buildings))) & (st_crs(crs(viirs)) == st_crs(crs(roads))) & (st_crs(crs(buildings)) == st_crs(crs(roads)))){
+    print("CRS's match!")
+  }else{
+    print("CRS's DO NOT match!")
+    st_crs(crs(viirs))$epsg
+    st_crs(crs(buildings))$epsg
+    st_crs(crs(roads))$epsg
+}
+```
+
+### Find the change in night lights intensity (presumably) caused by the storm
+```{r}
+difference <- feb_07 - feb_16
+```
+
+#### Reclassify by blackout
+Assuming that any location that experienced a drop of more than 200 nW cm-2sr-1 experienced a blackout.
+```{r}
+# NTL Reclassification Matrix
+
+ntl_rcl <- matrix(c(-Inf, 200, NA, # values -Inf to 200 = NA, no blackout
+                    200, Inf, 1),  # values 200 or greater = 1, blackout
+                    ncol = 3, byrow = TRUE)
+
+# Apply reclassification
+blackout_mask <- terra::classify(difference, rcl = ntl_rcl)
+```
+
+#### Vectorize the blackout mask
+```{r}
+houston <- ext(-96.5, -94.5, 29, 30.5)
+
+blackout <- blackout_mask |> 
+    crop(houston) |> 
+    as.polygons(aggregate = FALSE, na.rm = TRUE) |> 
+    st_as_sf() |> 
+    st_make_valid() |> 
+    st_transform("EPSG:3083")
+```
+
+### Exclude highways from the cropped blackout mask
+Exclude any locations within 200 meters of all highways in the Houston area.
+```{r}
+texas_highways <- st_transform(roads, "EPSG:3083")
+
+highways_buffer <- st_buffer(texas_highways, dist = 200)
+highways_union <- st_union(highways_buffer)
+
+ntl_wo_highways <- st_difference(blackout, highways_union)
+```
+
+### Identify the number of homes likely impacted by blackouts
+```{r}
+texas_homes <- st_transform(buildings, "EPSG:3083")
+blackout_homes <- st_filter(texas_homes, ntl_wo_highways, .predicate = st_intersects)
+```
+
+```{r}
+tmap_mode("view")
+
+ntl_roads_map <- tm_basemap("OpenStreetMap") +
+    tm_shape(ntl_wo_highways) +
+        tm_polygons(fill = "yellow", fill_alpha = 0.5, lwd = 0) +
+    tm_shape(texas_homes) +
+        tm_polygons(col = "pink") +
+    tm_shape(blackout_homes) +
+        tm_polygons(col = "red")
+ntl_roads_map
+```
