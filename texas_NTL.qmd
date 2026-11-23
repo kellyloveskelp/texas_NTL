@@ -1,11 +1,18 @@
 ---
-title:
+title: "Mapping the Electrical Grid Impact of Feburary 2024 Storms in Texas"
+subtitle: "Using VIIRS Nighttime Light (NTL) Satellite Imagery"
+author: "Kelly Morgan"
+date: "Nov 19, 2026"
+format: pdf
 ---
 
 # Using VIIRS Nightime Light (NTL) to Visualize the Impact of Winter Storms
 ## Feburary 2021 Power Outages in Texas 
 
 ```{r}
+#| warning: false
+#| message: false
+
 # Import libraries
 library(here)
 library(terra) # raster handling
@@ -102,14 +109,48 @@ blackout_homes <- st_filter(texas_homes, ntl_wo_highways, .predicate = st_inters
 ```
 
 ```{r}
-tmap_mode("view")
+homes_table <- blackout_homes |> 
+    st_drop_geometry() |> 
+    unique() |> 
+    group_by(type) |> 
+    summarise(total_homes = n()) |> 
+    kable(
+        format = 'simple', 
+        col.names = c("Home Type", "Number Affected by Blackout"),
+        caption = paste(length(blackout_homes$osm_id), "total Texas homes affected by the blackout.")
+    )
+homes_table
+```
+
+```{r}
+tmap_mode("plot")
 
 ntl_roads_map <- tm_basemap("OpenStreetMap") +
     tm_shape(ntl_wo_highways) +
-        tm_polygons(fill = "yellow", fill_alpha = 0.5, lwd = 0) +
-    tm_shape(texas_homes) +
-        tm_polygons(col = "pink") +
+    tm_options(component.autoscale = FALSE) +
+        tm_polygons(
+            fill = "yellow", 
+            fill_alpha = 0.5, 
+            lwd = 0,
+            fill.legend = tm_legend(title = "Blackout Areas",
+                                        position = tm_pos_out('left'))
+            ) +
     tm_shape(blackout_homes) +
-        tm_polygons(col = "red")
+        tm_polygons(
+            fill = 'type',
+            fill_alpha = 1,
+            lwd = 0,
+            fill.scale = tm_scale_categorical(values = 'brewer.set2'),
+            fill.legend = tm_legend(title = "Homes Without Electricity",
+                                        position = tm_pos_out('left')),
+            ) +
+    tm_compass(position = c('left', 'bottom'), # Add compass
+                    size = 2) +
+    tm_scalebar(position = c('left', 'bottom')) + # Add scalebar
+    tm_title(
+        text = paste("Impact of Feburary 2024 Storms in Texas"),
+        size = 1,
+        position = tm_pos_out('center', 'top')) 
+
 ntl_roads_map
 ```
